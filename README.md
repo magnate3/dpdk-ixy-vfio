@@ -41,6 +41,35 @@ Check out our research paper ["User Space Network Drivers"](https://www.net.in.t
 
 If you prefer to dive into the code: Start by reading the apps in [src/app](https://github.com/emmericp/ixy/tree/master/src/app) then follow the function calls into the driver. The comments in the code refer to the [Intel 82599 datasheet](https://www.intel.com/content/dam/www/public/us/en/documents/datasheets/82599-10-gbe-controller-datasheet.pdf) (Revision 3.3, March 2016).
 
+# pci device e1000
+
+## pci config
+
+```
+	int config = pci_open_resource(pci_addr, "config", O_RDONLY);
+	uint16_t vendor_id = read_io16(config, 0);
+	uint16_t device_id = read_io16(config, 2);
+	uint32_t class_id = read_io32(config, 8) >> 24
+```
+
+## pci_map_resource
+```
+dev->addr = pci_map_resource(pci_addr);
+
+uint8_t* pci_map_resource(const char* pci_addr) {
+        char path[PATH_MAX];
+        snprintf(path, PATH_MAX, "/sys/bus/pci/devices/%s/resource0", pci_addr);
+        debug("Mapping PCI resource at %s", path);
+        remove_driver(pci_addr);
+        enable_dma(pci_addr);
+        int fd = check_err(open(path, O_RDWR), "open pci resource");
+        struct stat stat;
+        check_err(fstat(fd, &stat), "stat pci resource");
+        uint8_t* hw = (uint8_t*) check_err(mmap(NULL, stat.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0), "mmap pci resource");
+        check_err(close(fd), "close pci resource");
+        return hw;
+}
+```
 
 
 # Compiling ixy and running the examples
