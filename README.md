@@ -71,6 +71,81 @@ uint8_t* pci_map_resource(const char* pci_addr) {
 }
 ```
 
+# compare dpdk and  ixy
+
+## ixy start_rx_queue
+
+```
+static void start_rx_queue(struct ixgbe_device* dev, int queue_id) {
+	debug("starting rx queue %d", queue_id);
+	struct ixgbe_rx_queue* queue = ((struct ixgbe_rx_queue*)(dev->rx_queues)) + queue_id;
+	// 2048 as pktbuf size is strictly speaking incorrect:
+	// we need a few headers (1 cacheline), so there's only 1984 bytes left for the device
+	// but the 82599 can only handle sizes in increments of 1 kb; but this is fine since our max packet size
+	// is the default MTU of 1518
+	// this has to be fixed if jumbo frames are to be supported
+	// mempool should be >= the number of rx and tx descriptors for a forwarding application
+	int mempool_size = NUM_RX_QUEUE_ENTRIES + NUM_TX_QUEUE_ENTRIES;
+	queue->mempool = memory_allocate_mempool(mempool_size < MIN_MEMPOOL_ENTRIES ? MIN_MEMPOOL_ENTRIES : mempool_size, PKT_BUF_ENTRY_SIZE);
+	if (queue->num_entries & (queue->num_entries - 1)) {
+		error("number of queue entries must be a power of 2");
+	}
+	for (int i = 0; i < queue->num_entries; i++) {
+		volatile union ixgbe_adv_rx_desc* rxd = queue->descriptors + i;
+		struct pkt_buf* buf = pkt_buf_alloc(queue->mempool);
+		if (!buf) {
+			error("failed to allocate rx descriptor");
+		}
+		rxd->read.pkt_addr = buf->buf_addr_phy + offsetof(struct pkt_buf, data);  ///////////////
+		rxd->read.hdr_addr = 0;
+		// we need to return the virtual address in the rx function which the descriptor doesn't know by default
+		queue->virtual_addresses[i] = buf;
+	}
+	// enable queue and wait if necessary
+	set_flags32(dev->addr, IXGBE_RXDCTL(queue_id), IXGBE_RXDCTL_ENABLE);
+	wait_set_reg32(dev->addr, IXGBE_RXDCTL(queue_id), IXGBE_RXDCTL_ENABLE);
+	// rx queue starts out full
+	set_reg32(dev->addr, IXGBE_RDH(queue_id), 0);
+	// was set to 0 before in the init function
+	set_reg32(dev->addr, IXGBE_RDT(queue_id), queue->num_entries - 1);
+}
+```
+
+
+## dpdk  ixgbe_alloc_rx_queue_mbufs
+```
+static int __attribute__((cold))
+ixgbe_alloc_rx_queue_mbufs(struct ixgbe_rx_queue *rxq)
+{
+  struct ixgbe_rx_entry *rxe = rxq->sw_ring;
+  uint64_t dma_addr;
+  unsigned int i;
+
+  /* Initialize software ring entries */
+  for (i = 0; i < rxq->nb_rx_desc; i++) {
+    volatile union ixgbe_adv_rx_desc *rxd;
+    struct rte_mbuf *mbuf = rte_mbuf_raw_alloc(rxq->mb_pool); /* 分配mbuf */
+
+    if (mbuf == NULL) {
+      PMD_INIT_LOG(ERR, "RX mbuf alloc failed queue_id=%u",
+             (unsigned) rxq->queue_id);
+      return -ENOMEM;
+    }
+
+    mbuf->data_off = RTE_PKTMBUF_HEADROOM;
+    mbuf->port = rxq->port_id;
+
+    dma_addr =
+      rte_cpu_to_le_64(rte_mbuf_data_dma_addr_default(mbuf)); /* mbuf的总线地址 */
+    rxd = &rxq->rx_ring[i];
+    rxd->read.hdr_addr = 0;
+    rxd->read.pkt_addr = dma_addr;  /* 总线地址赋给 rxd->read.pkt_addr */
+    rxe[i].mbuf = mbuf;       /* 将 mbuf 挂载到 rxe */
+  }
+
+  return 0;
+}
+```
 
 # Compiling ixy and running the examples
 
