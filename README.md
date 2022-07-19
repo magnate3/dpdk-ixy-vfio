@@ -110,7 +110,9 @@ static void start_rx_queue(struct ixgbe_device* dev, int queue_id) {
 	set_reg32(dev->addr, IXGBE_RDT(queue_id), queue->num_entries - 1);
 }
 ```
+
 ##  buf->buf_addr_phy
+![image](https://github.com/magnate3/dpdk-ixy-vfio/blob/e1000/pic/iova.png)
 
 ## vfio_map_dma
 ```
